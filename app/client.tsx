@@ -1,18 +1,17 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Rates = {
-  weekdayOrd: number; // $/hr
-  weekdayNight: number; // $/hr
-  sat: number; // $/hr
-  sun: number; // $/hr
-  publicHoliday: number; // $/hr
-  activeSleepoverHourly: number; // $/hr (ACTIVE = hourly)
-  fixedSleepoverUnit: number; // $ flat per sleepover (FIXED = flat)
-  gstRate: number; // 0 or 0.1
+  weekdayOrd: number;
+  weekdayNight: number;
+  sat: number;
+  sun: number;
+  publicHoliday: number;
+  activeSleepoverHourly: number;
+  fixedSleepoverUnit: number;
+  gstRate: number;
 };
 
 type SupportLine = {
@@ -21,16 +20,14 @@ type SupportLine = {
   description: string;
   totalFunding: number;
 
-  // hours per week
   hrsWeekdayOrd: number;
   hrsWeekdayNight: number;
   hrsSat: number;
   hrsSun: number;
   hrsPublicHoliday: number;
 
-  // sleepovers per week
-  activeSleepoverHours: number; // hours/week (paid hourly)
-  fixedSleepovers: number; // count/week (flat per unit)
+  activeSleepoverHours: number;
+  fixedSleepovers: number;
 };
 
 function money(n: number): string {
@@ -63,7 +60,6 @@ function Field(props: {
   label: string;
   value: number;
   step?: number;
-  disabled?: boolean;
   onChange: (v: number) => void;
 }) {
   return (
@@ -73,9 +69,8 @@ function Field(props: {
         type="number"
         step={props.step ?? 1}
         value={Number.isFinite(props.value) ? props.value : 0}
-        disabled={!!props.disabled}
         onChange={(e) => props.onChange(num(e.target.value))}
-        className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-100 outline-none focus:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-100 outline-none focus:border-slate-400"
       />
     </label>
   );
@@ -84,7 +79,6 @@ function Field(props: {
 function TextField(props: {
   label: string;
   value: string;
-  disabled?: boolean;
   onChange: (v: string) => void;
 }) {
   return (
@@ -92,9 +86,8 @@ function TextField(props: {
       <div className="text-sm text-slate-300 mb-1">{props.label}</div>
       <input
         value={props.value}
-        disabled={!!props.disabled}
         onChange={(e) => props.onChange(e.target.value)}
-        className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-100 outline-none focus:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="w-full rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-slate-100 outline-none focus:border-slate-400"
       />
     </label>
   );
@@ -109,106 +102,28 @@ function escapeHtml(s: string) {
     .replaceAll("'", "&#039;");
 }
 
-export default function Page() {
+export default function PageClient() {
   const STORAGE_KEY = "ndis_budget_calc_v2";
-  const UNLOCK_KEY = "ndis_budget_unlocked";
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  // Paywall removed ✅
+  const unlocked = true;
 
-  // Locked by default
-  const [unlocked, setUnlocked] = useState(false);
+  // Optional: show who is logged in (team can still use /login)
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // current logged-in user id
-  const [userId, setUserId] = useState<string | null>(null);
-
-  // checkout button loading + messages
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [checkoutMsg, setCheckoutMsg] = useState<string>("");
-
-  // load unlock status from localStorage
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(UNLOCK_KEY);
-      if (saved === "true") setUnlocked(true);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // Stripe redirect back with ?success=true -> unlock & persist
-  useEffect(() => {
-    const success = searchParams.get("success");
-    if (success === "true") {
-      setUnlocked(true);
-      try {
-        localStorage.setItem(UNLOCK_KEY, "true");
-      } catch {
-        // ignore
-      }
-      router.replace("/"); // clean URL
-    }
-  }, [searchParams, router]);
-
-  // find logged in user (if any)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      setUserId(data.user?.id ?? null);
+      setUserEmail(data.user?.email ?? null);
     });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserEmail(session?.user?.email ?? null);
+    });
+
+    return () => {
+      sub.subscription.unsubscribe();
+    };
   }, []);
-
-  // start Stripe checkout
-  const startCheckout = async () => {
-    setCheckoutMsg("");
-
-    if (!userId) {
-      alert("Please log in first (go to /login).");
-      return;
-    }
-
-    try {
-      setCheckoutLoading(true);
-
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId }),
-      });
-
-      // Handle “Unexpected token <” (server returned HTML)
-      const contentType = res.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
-        const text = await res.text();
-        setCheckoutMsg(
-          `Checkout failed: server did not return JSON.\n\n${text.slice(0, 200)}`
-        );
-        return;
-      }
-
-      const data = await res.json();
-
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
-      }
-
-      setCheckoutMsg(data?.error || "Checkout failed (no URL returned).");
-    } catch (e: any) {
-      setCheckoutMsg(e?.message || "Checkout failed.");
-    } finally {
-      setCheckoutLoading(false);
-    }
-  };
-
-  // (dev) reset unlock
-  const resetUnlock = () => {
-    try {
-      localStorage.removeItem(UNLOCK_KEY);
-    } catch {
-      // ignore
-    }
-    setUnlocked(false);
-  };
 
   const [rates, setRates] = useState<Rates>({
     weekdayOrd: 70.23,
@@ -249,7 +164,6 @@ export default function Page() {
     } catch {
       // ignore
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Save state
@@ -291,14 +205,13 @@ export default function Page() {
 
   const totals = useMemo(() => {
     const totalFunding = perLine.reduce((a, l) => a + l.totalFunding, 0);
-    const weekly = perLine.reduce((a, l) => a + l.weeklyTotal, 0);
-    const annual = perLine.reduce((a, l) => a + l.annualTotal, 0);
+    const weekly = perLine.reduce((a, l: any) => a + l.weeklyTotal, 0);
+    const annual = perLine.reduce((a, l: any) => a + l.annualTotal, 0);
     const remaining = totalFunding - annual;
     return { totalFunding, weekly, annual, remaining };
   }, [perLine]);
 
   function updateLine(id: string, patch: Partial<SupportLine>) {
-    if (!unlocked) return; // hard guard
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
 
@@ -348,7 +261,7 @@ export default function Page() {
       "Remaining",
     ];
 
-    const rows = perLine.map((l) => [
+    const rows = perLine.map((l: any) => [
       l.code,
       l.description,
       l.totalFunding,
@@ -399,7 +312,7 @@ export default function Page() {
     `;
 
     const rowsHtml = perLine
-      .map((l) => {
+      .map((l: any) => {
         const remClass = l.remaining < 0 ? "neg" : "pos";
         return `
           <tr>
@@ -497,7 +410,7 @@ export default function Page() {
 
     const w = window.open("", "_blank");
     if (!w) {
-      alert("Popup blocked. Allow popups for localhost and try again.");
+      alert("Popup blocked. Allow popups for this site and try again.");
       return;
     }
     w.document.open();
@@ -505,63 +418,18 @@ export default function Page() {
     w.document.close();
   }
 
-  // Helpers to prevent editing when locked (even if devtools tries to trigger events)
-  const setRatesIfUnlocked = (updater: (r: Rates) => Rates) => {
-    if (!unlocked) return;
-    setRates(updater);
-  };
-
   return (
     <main className="min-h-screen bg-black text-white">
       <div className="mx-auto max-w-6xl p-6">
-        <h1 className="text-3xl font-bold mb-6">NDIS Budget Calculator (MVP)</h1>
+        <h1 className="text-3xl font-bold mb-2">NDIS Budget Calculator (MVP)</h1>
 
-        {/* Checkout + Status strip */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 mb-6 flex flex-wrap items-center gap-3 justify-between">
-          <div className="text-sm text-slate-300">
-            <div>
-              {userId ? (
-                <span>
-                  Logged in ✅ <span className="text-slate-500">(user detected)</span>
-                </span>
-              ) : (
-                <span>
-                  Not logged in ❌ <span className="text-slate-500">(go to /login)</span>
-                </span>
-              )}
-            </div>
-
-            <div className="mt-1">
-              Status:{" "}
-              {unlocked ? (
-                <span className="text-green-300 font-semibold">Unlocked ✅</span>
-              ) : (
-                <span className="text-yellow-300 font-semibold">Locked 🔒</span>
-              )}
-            </div>
-
-            {checkoutMsg ? (
-              <div className="text-red-300 mt-2 whitespace-pre-wrap">{checkoutMsg}</div>
-            ) : null}
-
-            {unlocked ? (
-              <button
-                onClick={resetUnlock}
-                className="mt-2 text-xs text-slate-400 underline hover:text-slate-200"
-                type="button"
-              >
-                (dev) reset unlock
-              </button>
-            ) : null}
-          </div>
-
-          <button
-            onClick={startCheckout}
-            disabled={!userId || checkoutLoading || unlocked}
-            className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400 disabled:opacity-40"
-          >
-            {unlocked ? "Unlocked" : checkoutLoading ? "Opening Stripe..." : "Pay $49.99 to Unlock"}
-          </button>
+        <div className="text-sm text-slate-400 mb-6">
+          Team mode: Paywall removed ✅{" "}
+          {userEmail ? (
+            <span className="text-slate-300">Logged in as {userEmail}</span>
+          ) : (
+            <span className="text-slate-500">(not logged in)</span>
+          )}
         </div>
 
         {/* Top summary */}
@@ -582,41 +450,29 @@ export default function Page() {
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               onClick={addLine}
-              disabled={!unlocked}
-              className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400 disabled:opacity-40"
-              title={!unlocked ? "Unlock to add lines" : ""}
+              className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400"
             >
               + Add support line
             </button>
 
             <button
               onClick={exportCSV}
-              disabled={!unlocked}
-              className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400 disabled:opacity-40"
-              title={!unlocked ? "Unlock to export" : ""}
+              className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400"
             >
               Export CSV
             </button>
 
             <button
               onClick={exportPDF}
-              disabled={!unlocked}
-              className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400 disabled:opacity-40"
-              title={!unlocked ? "Unlock to export" : ""}
+              className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2 hover:border-slate-400"
             >
               Export PDF
             </button>
           </div>
 
-          {!unlocked ? (
-            <div className="text-sm text-yellow-300 mt-3">
-              Locked 🔒 — fields are read-only until you unlock.
-            </div>
-          ) : (
-            <div className="text-sm text-slate-400 mt-3">
-              Active sleepover = hourly (hours/week). Fixed sleepover = flat per unit (count/week). GST applies to the whole weekly base.
-            </div>
-          )}
+          <div className="text-sm text-slate-400 mt-3">
+            Active sleepover = hourly (hours/week). Fixed sleepover = flat per unit (count/week). GST applies to the whole weekly base.
+          </div>
         </div>
 
         {/* Rates */}
@@ -624,69 +480,20 @@ export default function Page() {
           <h2 className="text-xl font-semibold mb-4">Rates</h2>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Field
-              label="Weekday (Ord) $/hr"
-              value={rates.weekdayOrd}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, weekdayOrd: v }))}
-              step={0.01}
-            />
-            <Field
-              label="Weekday (Night) $/hr"
-              value={rates.weekdayNight}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, weekdayNight: v }))}
-              step={0.01}
-            />
-            <Field
-              label="Saturday $/hr"
-              value={rates.sat}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, sat: v }))}
-              step={0.01}
-            />
-            <Field
-              label="Sunday $/hr"
-              value={rates.sun}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, sun: v }))}
-              step={0.01}
-            />
-
-            <Field
-              label="Public Holiday $/hr"
-              value={rates.publicHoliday}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, publicHoliday: v }))}
-              step={0.01}
-            />
-            <Field
-              label="Active sleepover $/hr (hourly)"
-              value={rates.activeSleepoverHourly}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, activeSleepoverHourly: v }))}
-              step={0.01}
-            />
-            <Field
-              label="Fixed sleepover $ (flat per unit)"
-              value={rates.fixedSleepoverUnit}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, fixedSleepoverUnit: v }))}
-              step={0.01}
-            />
-            <Field
-              label="GST rate (0 or 0.1)"
-              value={rates.gstRate}
-              disabled={!unlocked}
-              onChange={(v) => setRatesIfUnlocked((r) => ({ ...r, gstRate: v }))}
-              step={0.01}
-            />
+            <Field label="Weekday (Ord) $/hr" value={rates.weekdayOrd} onChange={(v) => setRates((r) => ({ ...r, weekdayOrd: v }))} step={0.01} />
+            <Field label="Weekday (Night) $/hr" value={rates.weekdayNight} onChange={(v) => setRates((r) => ({ ...r, weekdayNight: v }))} step={0.01} />
+            <Field label="Saturday $/hr" value={rates.sat} onChange={(v) => setRates((r) => ({ ...r, sat: v }))} step={0.01} />
+            <Field label="Sunday $/hr" value={rates.sun} onChange={(v) => setRates((r) => ({ ...r, sun: v }))} step={0.01} />
+            <Field label="Public Holiday $/hr" value={rates.publicHoliday} onChange={(v) => setRates((r) => ({ ...r, publicHoliday: v }))} step={0.01} />
+            <Field label="Active sleepover $/hr (hourly)" value={rates.activeSleepoverHourly} onChange={(v) => setRates((r) => ({ ...r, activeSleepoverHourly: v }))} step={0.01} />
+            <Field label="Fixed sleepover $ (flat per unit)" value={rates.fixedSleepoverUnit} onChange={(v) => setRates((r) => ({ ...r, fixedSleepoverUnit: v }))} step={0.01} />
+            <Field label="GST rate (0 or 0.1)" value={rates.gstRate} onChange={(v) => setRates((r) => ({ ...r, gstRate: v }))} step={0.01} />
           </div>
         </div>
 
         {/* Lines */}
         <div className="grid gap-6">
-          {perLine.map((l) => (
+          {perLine.map((l: any) => (
             <div key={l.id} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-6">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <div className="text-xl font-semibold">
@@ -696,9 +503,9 @@ export default function Page() {
 
                 <button
                   onClick={() => deleteLine(l.id)}
-                  disabled={!unlocked || lines.length <= 1}
+                  disabled={lines.length <= 1}
                   className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 hover:border-slate-400 disabled:opacity-40"
-                  title={!unlocked ? "Unlock to delete lines" : lines.length <= 1 ? "Need at least one line" : "Delete this line"}
+                  title={lines.length <= 1 ? "Need at least one line" : "Delete this line"}
                 >
                   Delete
                 </button>
@@ -708,56 +515,28 @@ export default function Page() {
                 <div className="rounded-xl border border-slate-800 bg-slate-900/20 p-4">
                   <div className="text-sm text-slate-300 mb-3 font-semibold">Line details</div>
                   <div className="grid grid-cols-1 gap-3">
-                    <TextField
-                      label="Code"
-                      value={l.code}
-                      disabled={!unlocked}
-                      onChange={(v) => updateLine(l.id, { code: v })}
-                    />
-                    <TextField
-                      label="Description"
-                      value={l.description}
-                      disabled={!unlocked}
-                      onChange={(v) => updateLine(l.id, { description: v })}
-                    />
-                    <Field
-                      label="Total funding (AUD)"
-                      value={l.totalFunding}
-                      disabled={!unlocked}
-                      onChange={(v) => updateLine(l.id, { totalFunding: v })}
-                      step={100}
-                    />
+                    <TextField label="Code" value={l.code} onChange={(v) => updateLine(l.id, { code: v })} />
+                    <TextField label="Description" value={l.description} onChange={(v) => updateLine(l.id, { description: v })} />
+                    <Field label="Total funding (AUD)" value={l.totalFunding} onChange={(v) => updateLine(l.id, { totalFunding: v })} step={100} />
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-slate-800 bg-slate-900/20 p-4">
                   <div className="text-sm text-slate-300 mb-3 font-semibold">Hours per week</div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Field label="Weekday (Ord) hrs/wk" value={l.hrsWeekdayOrd} disabled={!unlocked} onChange={(v) => updateLine(l.id, { hrsWeekdayOrd: v })} step={0.25} />
-                    <Field label="Weekday (Night) hrs/wk" value={l.hrsWeekdayNight} disabled={!unlocked} onChange={(v) => updateLine(l.id, { hrsWeekdayNight: v })} step={0.25} />
-                    <Field label="Saturday hrs/wk" value={l.hrsSat} disabled={!unlocked} onChange={(v) => updateLine(l.id, { hrsSat: v })} step={0.25} />
-                    <Field label="Sunday hrs/wk" value={l.hrsSun} disabled={!unlocked} onChange={(v) => updateLine(l.id, { hrsSun: v })} step={0.25} />
-                    <Field label="Public Holiday hrs/wk" value={l.hrsPublicHoliday} disabled={!unlocked} onChange={(v) => updateLine(l.id, { hrsPublicHoliday: v })} step={0.25} />
+                    <Field label="Weekday (Ord) hrs/wk" value={l.hrsWeekdayOrd} onChange={(v) => updateLine(l.id, { hrsWeekdayOrd: v })} step={0.25} />
+                    <Field label="Weekday (Night) hrs/wk" value={l.hrsWeekdayNight} onChange={(v) => updateLine(l.id, { hrsWeekdayNight: v })} step={0.25} />
+                    <Field label="Saturday hrs/wk" value={l.hrsSat} onChange={(v) => updateLine(l.id, { hrsSat: v })} step={0.25} />
+                    <Field label="Sunday hrs/wk" value={l.hrsSun} onChange={(v) => updateLine(l.id, { hrsSun: v })} step={0.25} />
+                    <Field label="Public Holiday hrs/wk" value={l.hrsPublicHoliday} onChange={(v) => updateLine(l.id, { hrsPublicHoliday: v })} step={0.25} />
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-slate-800 bg-slate-900/20 p-4">
                   <div className="text-sm text-slate-300 mb-3 font-semibold">Sleepovers per week</div>
                   <div className="grid grid-cols-1 gap-3">
-                    <Field
-                      label="Active sleepover HOURS / wk (hourly paid)"
-                      value={l.activeSleepoverHours}
-                      disabled={!unlocked}
-                      onChange={(v) => updateLine(l.id, { activeSleepoverHours: v })}
-                      step={0.25}
-                    />
-                    <Field
-                      label="Fixed sleepovers / wk (units, flat paid)"
-                      value={l.fixedSleepovers}
-                      disabled={!unlocked}
-                      onChange={(v) => updateLine(l.id, { fixedSleepovers: v })}
-                      step={1}
-                    />
+                    <Field label="Active sleepover HOURS / wk (hourly paid)" value={l.activeSleepoverHours} onChange={(v) => updateLine(l.id, { activeSleepoverHours: v })} step={0.25} />
+                    <Field label="Fixed sleepovers / wk (units, flat paid)" value={l.fixedSleepovers} onChange={(v) => updateLine(l.id, { fixedSleepovers: v })} step={1} />
                   </div>
 
                   <div className="mt-4 text-sm text-slate-300">
