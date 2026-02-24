@@ -1,36 +1,77 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = async () => {
-    const { error } = await supabase.auth.signInWithOtp({ email });
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
 
-    if (error) setMessage(error.message);
-    else setMessage("Check your email for the login link.");
-  };
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: typeof window !== "undefined"
+          ? window.location.origin
+          : undefined,
+      },
+    });
+
+    if (error) {
+      setError(error.message);
+    } else {
+      setSent(true);
+    }
+  }
 
   return (
-    <div style={{ maxWidth: 400, margin: "100px auto", textAlign: "center" }}>
-      <h1>Login</h1>
+    <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+      <div className="w-full max-w-md space-y-6">
+        <h1 className="text-2xl font-bold text-center">
+          Sign in
+        </h1>
 
-      <input
-        type="email"
-        placeholder="you@example.com"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        style={{ width: "100%", padding: 10, marginBottom: 10 }}
-      />
+        {sent ? (
+          <p className="text-center text-green-400">
+            Check your email and click the login link.
+            <br />
+            You can close this tab after clicking it.
+          </p>
+        ) : (
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input
+              type="email"
+              placeholder="you@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full p-3 rounded bg-neutral-900 border border-neutral-700 text-white"
+            />
 
-      <button onClick={handleLogin} style={{ width: "100%", padding: 10 }}>
-        Send Login Link
-      </button>
+            <button
+              type="submit"
+              className="w-full bg-white text-black font-semibold p-3 rounded"
+            >
+              Send login link
+            </button>
 
-      {message && <p>{message}</p>}
-    </div>
+            {error && (
+              <p className="text-red-400 text-sm text-center">
+                {error}
+              </p>
+            )}
+          </form>
+        )}
+      </div>
+    </main>
   );
 }
