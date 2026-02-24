@@ -1,0 +1,59 @@
+
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww30040\viewh15900\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 import \{ NextResponse \} from "next/server";\
+import Stripe from "stripe";\
+import \{ createClient \} from "@supabase/supabase-js";\
+\
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, \{\
+  apiVersion: "2023-10-16",\
+\});\
+\
+const supabaseAdmin = createClient(\
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,\
+  process.env.SUPABASE_SERVICE_ROLE_KEY!\
+);\
+\
+export async function POST(req: Request) \{\
+  const \{ userId \} = await req.json();\
+\
+  if (!userId) \{\
+    return NextResponse.json(\{ error: "Missing userId" \}, \{ status: 400 \});\
+  \}\
+\
+  const session = await stripe.checkout.sessions.create(\{\
+    mode: "payment",\
+    payment_method_types: ["card"],\
+    line_items: [\
+      \{\
+        price_data: \{\
+          currency: "aud",\
+          product_data: \{\
+            name: "NDIS Budget Calculator \'96 Lifetime Access",\
+          \},\
+          unit_amount: 4999, // $49.99 AUD\
+        \},\
+        quantity: 1,\
+      \},\
+    ],\
+    success_url: "http://localhost:3000/?paid=true",\
+    cancel_url: "http://localhost:3000/?cancelled=true",\
+    metadata: \{\
+      user_id: userId,\
+    \},\
+  \});\
+\
+  // Store pending checkout\
+  await supabaseAdmin.from("user_access").upsert(\{\
+    user_id: userId,\
+    stripe_checkout_session_id: session.id,\
+    has_paid: false,\
+  \});\
+\
+  return NextResponse.json(\{ url: session.url \});\
+\}}
