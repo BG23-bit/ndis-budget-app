@@ -5,10 +5,11 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
+    // ✅ IMPORTANT: do NOT read env vars or create Stripe client at module scope.
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 
-    // ✅ Do NOT crash build if env var missing
     if (!stripeSecretKey) {
+      // ✅ No throw (throws can crash build). Return JSON instead.
       return NextResponse.json(
         { error: "Missing STRIPE_SECRET_KEY env var" },
         { status: 500 }
@@ -17,19 +18,10 @@ export async function POST(req: Request) {
 
     const stripe = new Stripe(stripeSecretKey);
 
-    const authHeader = req.headers.get("authorization") || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.slice("Bearer ".length)
-      : null;
-
-    if (!token) {
-      return NextResponse.json({ error: "Missing auth token" }, { status: 401 });
-    }
-
-    // NOTE: If you're not doing the paid version yet, you can skip token validation
-    // For now we just create a Checkout session without needing metadata.
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
 
+    // If you're not using auth yet, we don't require userId here.
+    // Keep it simple so build + deploy succeeds.
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
