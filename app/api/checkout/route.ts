@@ -5,11 +5,10 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
-    // ✅ IMPORTANT: do NOT read env vars or create Stripe client at module scope.
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 
+    // IMPORTANT: do NOT throw at module scope (Vercel build evaluates modules)
     if (!stripeSecretKey) {
-      // ✅ No throw (throws can crash build). Return JSON instead.
       return NextResponse.json(
         { error: "Missing STRIPE_SECRET_KEY env var" },
         { status: 500 }
@@ -18,10 +17,17 @@ export async function POST(req: Request) {
 
     const stripe = new Stripe(stripeSecretKey);
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const body = await req.json().catch(() => ({}));
+    const userId = body?.userId || null;
 
-    // If you're not using auth yet, we don't require userId here.
-    // Keep it simple so build + deploy succeeds.
+    const baseUrl =
+      process.env.NEXT_PUBLIC_BASE_URL ||
+      process.env.VERCEL_URL?.startsWith("http")
+        ? process.env.VERCEL_URL
+        : process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : "http://localhost:3000";
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -29,14 +35,15 @@ export async function POST(req: Request) {
         {
           price_data: {
             currency: "aud",
-            product_data: { name: "NDIS Budget Calculator – Lifetime Access" },
+            product_data: { name: "NDIS Budget Calculator – Access" },
             unit_amount: 4999,
           },
           quantity: 1,
         },
       ],
-      success_url: `${baseUrl}/?success=1`,
-      cancel_url: `${baseUrl}/?canceled=1`,
+      success_url: `${baseUrl}/?success=true`,
+      cancel_url: `${baseUrl}/?canceled=true`,
+      metadata: userId ? { userId: String(userId) } : undefined,
     });
 
     return NextResponse.json({ url: session.url });
